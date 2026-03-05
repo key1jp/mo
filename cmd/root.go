@@ -340,22 +340,41 @@ func postItems(client *http.Client, addr, endpoint, key, group string, items []s
 	}
 }
 
-func doShutdown(addr string) error {
+// probeServer checks that a mo server is running on addr by calling
+// GET /_/api/groups and validating the response structure.
+func probeServer(addr string) (*http.Client, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
-
 	resp, err := client.Get(fmt.Sprintf("http://%s/_/api/groups", addr))
 	if err != nil {
-		return fmt.Errorf("no mo server found on %s", addr)
+		return nil, fmt.Errorf("no mo server found on %s", addr)
 	}
+	defer resp.Body.Close()
 
-	var groups []json.RawMessage
+	var groups []struct {
+		Name  string `json:"name"`
+		Files []struct {
+			ID int `json:"id"`
+		} `json:"files"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&groups); err != nil {
-		resp.Body.Close()
-		return fmt.Errorf("server on %s is not a mo instance", addr)
+		return nil, fmt.Errorf("server on %s is not a mo instance", addr)
 	}
-	resp.Body.Close()
+	// Validate that the response has the expected structure
+	for _, g := range groups {
+		if g.Name == "" {
+			return nil, fmt.Errorf("server on %s is not a mo instance", addr)
+		}
+	}
+	return client, nil
+}
 
-	resp, err = client.Post(fmt.Sprintf("http://%s/_/api/shutdown", addr), "application/json", nil)
+func doShutdown(addr string) error {
+	client, err := probeServer(addr)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Post(fmt.Sprintf("http://%s/_/api/shutdown", addr), "application/json", nil)
 	if err != nil {
 		return fmt.Errorf("failed to send shutdown request: %w", err)
 	}
@@ -371,19 +390,10 @@ func doShutdown(addr string) error {
 }
 
 func doUnwatch(addr string, patterns []string, groupName string) error {
-	client := &http.Client{Timeout: 2 * time.Second}
-
-	resp, err := client.Get(fmt.Sprintf("http://%s/_/api/groups", addr))
+	client, err := probeServer(addr)
 	if err != nil {
-		return fmt.Errorf("no mo server found on %s", addr)
+		return err
 	}
-
-	var groups []json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&groups); err != nil {
-		resp.Body.Close()
-		return fmt.Errorf("server on %s is not a mo instance", addr)
-	}
-	resp.Body.Close()
 
 	for _, pat := range patterns {
 		body, err := json.Marshal(map[string]string{
