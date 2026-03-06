@@ -90,8 +90,25 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (groups.length === 0) {
+      setActiveFileId(null);
+      return;
+    }
+
     const group = groups.find((g) => g.name === activeGroup);
-    if (!group || group.files.length === 0) {
+    if (!group) {
+      // activeGroup doesn't exist; redirect to a deterministic fallback group
+      const sortedGroups = [...groups].sort((a, b) => {
+        if (a.name === "default") return 1;
+        if (b.name === "default") return -1;
+        return a.name.localeCompare(b.name);
+      });
+      const fallback = sortedGroups[0].name;
+      setActiveGroup(fallback);
+      window.history.replaceState(null, "", groupToPath(fallback));
+      return;
+    }
+    if (group.files.length === 0) {
       setActiveFileId(null);
       return;
     }
