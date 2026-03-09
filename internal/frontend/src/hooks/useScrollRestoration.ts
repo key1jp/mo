@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 
-const SESSION_KEY = "mo-scroll-context";
+export const SCROLL_SESSION_KEY = "mo-scroll-context";
 
 interface ScrollContext {
   headingId: string | null;
@@ -17,21 +17,16 @@ export function useScrollRestoration(
 ) {
   const savedContextRef = useRef<ScrollContext | null>(null);
   const pendingRestoreRef = useRef(false);
+  const sessionRestoredRef = useRef(false);
 
-  // Keep latest values in refs for beforeunload (which can't use stale closures)
-  const scrollContainerRef = useRef(scrollContainer);
-  scrollContainerRef.current = scrollContainer;
-  const activeHeadingIdRef = useRef(activeHeadingId);
-  activeHeadingIdRef.current = activeHeadingId;
-  const activeFileIdRef = useRef(activeFileId);
-  activeFileIdRef.current = activeFileId;
+  // Single ref object for stable access in beforeunload and captureScrollPosition
+  const latestRef = useRef({ scrollContainer, activeHeadingId, activeFileId });
+  latestRef.current = { scrollContainer, activeHeadingId, activeFileId };
 
   const captureScrollPosition = useCallback(() => {
-    const sc = scrollContainerRef.current;
-    const fileId = activeFileIdRef.current;
+    const { scrollContainer: sc, activeFileId: fileId, activeHeadingId: headingId } = latestRef.current;
     if (!sc || !fileId) return;
 
-    const headingId = activeHeadingIdRef.current;
     const rawScrollTop = sc.scrollTop;
     let relativeOffset = 0;
 
@@ -56,7 +51,7 @@ export function useScrollRestoration(
     pendingRestoreRef.current = true;
 
     try {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(ctx));
+      sessionStorage.setItem(SCROLL_SESSION_KEY, JSON.stringify(ctx));
     } catch {
       // sessionStorage may be unavailable
     }
@@ -64,64 +59,65 @@ export function useScrollRestoration(
 
   const restoreFromContext = useCallback(
     (ctx: ScrollContext) => {
-      if (!scrollContainer) return;
+      const sc = latestRef.current.scrollContainer;
+      if (!sc) return;
 
       if (ctx.headingId) {
         const headingEl = document.getElementById(ctx.headingId);
         if (headingEl) {
           const currentOffset =
             headingEl.getBoundingClientRect().top -
-            scrollContainer.getBoundingClientRect().top;
-          scrollContainer.scrollTop += currentOffset - ctx.relativeOffset;
+            sc.getBoundingClientRect().top;
+          sc.scrollTop += currentOffset - ctx.relativeOffset;
           return;
         }
       }
 
-      scrollContainer.scrollTop = ctx.rawScrollTop;
+      sc.scrollTop = ctx.rawScrollTop;
     },
-    [scrollContainer],
+    [],
   );
 
   const onContentRendered = useCallback(() => {
+    const fileId = latestRef.current.activeFileId;
+
     // Path A: React re-render (ref-based)
     if (pendingRestoreRef.current && savedContextRef.current) {
       const ctx = savedContextRef.current;
-      if (ctx.fileId === activeFileId) {
+      if (ctx.fileId === fileId) {
         restoreFromContext(ctx);
       }
       savedContextRef.current = null;
       pendingRestoreRef.current = false;
       try {
-        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(SCROLL_SESSION_KEY);
       } catch {
         // ignore
       }
       return;
     }
 
-    // Path B: Full page reload (sessionStorage-based)
+    // Path B: Full page reload (sessionStorage-based, one-shot)
+    if (sessionRestoredRef.current) return;
+    sessionRestoredRef.current = true;
     try {
-      const stored = sessionStorage.getItem(SESSION_KEY);
+      const stored = sessionStorage.getItem(SCROLL_SESSION_KEY);
       if (stored) {
         const ctx: ScrollContext = JSON.parse(stored);
-        sessionStorage.removeItem(SESSION_KEY);
-        if (
-          ctx.fileId === activeFileId &&
-          ctx.url === window.location.pathname
-        ) {
+        sessionStorage.removeItem(SCROLL_SESSION_KEY);
+        if (ctx.fileId === fileId && ctx.url === window.location.pathname) {
           restoreFromContext(ctx);
         }
       }
     } catch {
       // ignore
     }
-  }, [activeFileId, restoreFromContext]);
+  }, [restoreFromContext]);
 
   // Capture scroll position before any page unload
   useEffect(() => {
-    const handler = () => captureScrollPosition();
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
+    window.addEventListener("beforeunload", captureScrollPosition);
+    return () => window.removeEventListener("beforeunload", captureScrollPosition);
   }, [captureScrollPosition]);
 
   return { captureScrollPosition, onContentRendered };

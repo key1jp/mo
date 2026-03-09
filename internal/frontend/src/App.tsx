@@ -12,7 +12,7 @@ import type { TocHeading } from "./components/TocPanel";
 import { useSSE } from "./hooks/useSSE";
 import { useFileDrop } from "./hooks/useFileDrop";
 import { useActiveHeading } from "./hooks/useActiveHeading";
-import { useScrollRestoration } from "./hooks/useScrollRestoration";
+import { useScrollRestoration, SCROLL_SESSION_KEY } from "./hooks/useScrollRestoration";
 import type { Group } from "./hooks/useApi";
 import { fetchGroups, removeFile, reorderFiles } from "./hooks/useApi";
 import {
@@ -48,7 +48,7 @@ export function App() {
     if (fromUrl) return fromUrl;
     // Restore active file from scroll context saved before reload
     try {
-      const stored = sessionStorage.getItem("mo-scroll-context");
+      const stored = sessionStorage.getItem(SCROLL_SESSION_KEY);
       if (stored) {
         const ctx = JSON.parse(stored);
         if (ctx.url === window.location.pathname && ctx.fileId) return ctx.fileId;
@@ -170,9 +170,9 @@ export function App() {
       loadGroups();
     },
     onFileChanged: (fileId) => {
+      captureScrollPosition();
       setActiveFileId((current) => {
         if (current === fileId) {
-          captureScrollPosition();
           setContentRevision((r) => r + 1);
         }
         return current;
