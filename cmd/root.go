@@ -175,40 +175,7 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	addr := fmt.Sprintf("%s:%d", bind, port)
-
-	// Skip the prompt when --restore is set (i.e. restart via spawnNewProcess),
-	// because the user already confirmed when they first started the server.
-	// Also skip for non-start operations such as --status/--shutdown/--restart/--clear/--unwatch.
-	if !isLoopbackBind(bind) &&
-		restore == "" &&
-		!statusServer &&
-		!shutdownServer &&
-		!restartServer &&
-		!clearBackup &&
-		len(unwatchPatterns) == 0 {
-		o := termenv.NewOutput(os.Stderr)
-		c := func(s string) termenv.Style { return o.String(s).Foreground(o.Color("208")) }
-		fmt.Fprintln(os.Stderr, c("SECURITY WARNING:").Bold(),
-			c(fmt.Sprintf("Binding to %s instead of localhost. mo has no authentication -- remote clients can:", bind)))
-		fmt.Fprintln(os.Stderr, c("  - Read any file accessible by this user"))
-		fmt.Fprintln(os.Stderr, c("  - Browse the filesystem via glob patterns"))
-		fmt.Fprintln(os.Stderr, c("  - Shut down or restart the server"))
-		fmt.Fprintf(os.Stderr, "Continue? [y/N] ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return err
-			}
-			fmt.Fprintln(os.Stderr, "mo: canceled")
-			return nil
-		}
-		ans := strings.ToLower(strings.TrimSpace(scanner.Text()))
-		if ans != "y" && ans != "yes" {
-			fmt.Fprintln(os.Stderr, "mo: canceled")
-			return nil
-		}
-	}
+	addr := net.JoinHostPort(bind, strconv.Itoa(port))
 
 	if clearBackup {
 		if !backup.Exists(port) {
@@ -336,6 +303,33 @@ func run(cmd *cobra.Command, args []string) error {
 		filesByGroup = mergeGroups(restoredFiles, filesByGroup)
 		patternsByGroup = mergeGroups(restoredPatterns, patternsByGroup)
 		uploadedFiles = restoredUploads
+	}
+
+	// Prompt only when actually starting a new server (not adding to existing one).
+	// Skip when --restore is set (i.e. restart via spawnNewProcess),
+	// because the user already confirmed when they first started the server.
+	if !isLoopbackBind(bind) && restore == "" {
+		o := termenv.NewOutput(os.Stderr)
+		c := func(s string) termenv.Style { return o.String(s).Foreground(o.Color("208")) }
+		fmt.Fprintln(os.Stderr, c("SECURITY WARNING:").Bold(),
+			c(fmt.Sprintf("Binding to %s instead of localhost. mo has no authentication -- remote clients can:", bind)))
+		fmt.Fprintln(os.Stderr, c("  - Read any file accessible by this user"))
+		fmt.Fprintln(os.Stderr, c("  - Browse the filesystem via glob patterns"))
+		fmt.Fprintln(os.Stderr, c("  - Shut down or restart the server"))
+		fmt.Fprintf(os.Stderr, "Continue? [y/N] ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stderr, "mo: canceled")
+			return nil
+		}
+		ans := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		if ans != "y" && ans != "yes" {
+			fmt.Fprintln(os.Stderr, "mo: canceled")
+			return nil
+		}
 	}
 
 	if foreground {
