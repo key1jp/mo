@@ -169,7 +169,7 @@ func init() {
 	rootCmd.Flags().StringArrayVar(&unwatchPatterns, "unwatch", nil, "Remove a watched glob pattern (repeatable)")
 	rootCmd.Flags().BoolVar(&clearBackup, "clear", false, "Clear saved session for the specified port")
 	rootCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output structured data as JSON to stdout")
-	rootCmd.Flags().BoolVar(&dangerouslyAllowRemoteAccess, "dangerously-allow-remote-access", false, "Skip the security confirmation prompt for non-loopback bind addresses")
+	rootCmd.Flags().BoolVar(&dangerouslyAllowRemoteAccess, "dangerously-allow-remote-access", false, "Allow remote access without authentication. Recommended only for trusted networks.")
 }
 
 func run(cmd *cobra.Command, args []string) error {
