@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { uploadFile } from "./useApi";
-import { isMarkdownFile } from "../utils/filetype";
 
 function hasFiles(e: DragEvent): boolean {
   return e.dataTransfer?.types.includes("Files") ?? false;
@@ -49,7 +48,7 @@ export function useFileDrop(activeGroup: string): { isDragging: boolean } {
       const uploads: Promise<void>[] = [];
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
-        if (isMarkdownFile(file.name) && file.size <= maxSize) {
+        if (file.size <= maxSize) {
           uploads.push(
             file
               .text()

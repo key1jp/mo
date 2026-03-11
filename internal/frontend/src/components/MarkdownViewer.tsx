@@ -511,7 +511,7 @@ export function MarkdownViewer({
       return <RawView content={content} />;
     }
     const base = parsed ? parsed.content : content;
-    const md = fileName.endsWith(".mdx") ? stripMdxSyntax(base) : base;
+    const md = fileName.toLowerCase().endsWith(".mdx") ? stripMdxSyntax(base) : base;
     return (
       <>
         {parsed && <FrontmatterBlock yaml={parsed.yaml} />}
