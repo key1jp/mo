@@ -1,12 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
-	"errors"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -76,9 +78,9 @@ type State struct {
 	patterns    []*GlobPattern
 	watchedDirs map[string]int // directory → reference count
 
-	backupCh     chan struct{}       // dirty signal (buffered, size 1)
-	backupSaveFn func(RestoreData)  // backup write callback
-	backupDone   chan struct{}       // closed when backupLoop exits
+	backupCh     chan struct{}     // dirty signal (buffered, size 1)
+	backupSaveFn func(RestoreData) // backup write callback
+	backupDone   chan struct{}     // closed when backupLoop exits
 }
 
 func NewState(ctx context.Context) *State {
@@ -106,7 +108,58 @@ func NewState(ctx context.Context) *State {
 	return s
 }
 
-func (s *State) AddFile(absPath, groupName string) *FileEntry {
+// ErrBinaryFile is returned when a file is detected as binary.
+var ErrBinaryFile = errors.New("binary file is not supported")
+
+// isBinaryFile checks whether the file at the given path is binary
+// by reading the first 8KB and looking for NUL bytes (same heuristic as Git).
+func isBinaryFile(path string) (bool, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	if !fi.Mode().IsRegular() {
+		return false, fmt.Errorf("not a regular file: %s", path)
+	}
+	f, err := os.Open(path) //nolint:gosec
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	var buf [8192]byte
+	n, err := f.Read(buf[:])
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+	return bytes.IndexByte(buf[:n], 0) >= 0, nil
+}
+
+func (s *State) AddFile(absPath, groupName string) (*FileEntry, error) {
+	// Check for duplicates before doing any I/O.
+	s.mu.RLock()
+	if g, ok := s.groups[groupName]; ok {
+		for _, f := range g.Files {
+			if f.Path == absPath {
+				s.mu.RUnlock()
+				return f, nil
+			}
+		}
+	}
+	s.mu.RUnlock()
+
+	bin, err := isBinaryFile(absPath)
+	if err != nil {
+		// If the file doesn't exist (yet), allow adding it.
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("failed to read file %s: %w", absPath, err)
+		}
+	} else if bin {
+		return nil, fmt.Errorf("%s: %w", absPath, ErrBinaryFile)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -116,9 +169,10 @@ func (s *State) AddFile(absPath, groupName string) *FileEntry {
 		s.groups[groupName] = g
 	}
 
+	// Re-check after re-acquiring the lock.
 	for _, f := range g.Files {
 		if f.Path == absPath {
-			return f
+			return f, nil
 		}
 	}
 
@@ -138,7 +192,7 @@ func (s *State) AddFile(absPath, groupName string) *FileEntry {
 	slog.Info("file added", "path", absPath, "group", groupName, "id", entry.ID)
 
 	s.sendEvent(sseEvent{Name: eventUpdate, Data: "{}"})
-	return entry
+	return entry, nil
 }
 
 func (s *State) AddUploadedFile(name, content, groupName string) *FileEntry {
@@ -466,7 +520,12 @@ func (s *State) AddPattern(absPattern, groupName string) ([]*FileEntry, error) {
 	var entries []*FileEntry
 	for _, m := range matches {
 		abs := filepath.Join(base, m)
-		entries = append(entries, s.AddFile(abs, groupName))
+		entry, err := s.AddFile(abs, groupName)
+		if err != nil {
+			slog.Warn("skipping file", "path", abs, "error", err)
+			continue
+		}
+		entries = append(entries, entry)
 	}
 
 	s.watchDirsForPattern(gp)
@@ -902,7 +961,10 @@ func (s *State) matchAndAddFile(path string, patterns []*GlobPattern) {
 			continue
 		}
 		if matched {
-			s.AddFile(path, gp.Group)
+			if _, err := s.AddFile(path, gp.Group); err != nil {
+				slog.Warn("skipping file", "path", path, "error", err)
+				return
+			}
 			slog.Info("auto-added file via glob", "path", path, "pattern", gp.Pattern, "group", gp.Group)
 			return
 		}
@@ -999,7 +1061,11 @@ func handleAddFile(state *State) http.HandlerFunc {
 			return
 		}
 
-		entry := state.AddFile(absPath, group)
+		entry, err := state.AddFile(absPath, group)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(entry); err != nil {
 			slog.Error("failed to encode response", "error", err)
@@ -1008,8 +1074,8 @@ func handleAddFile(state *State) http.HandlerFunc {
 }
 
 func handleUploadFile(state *State) http.HandlerFunc {
-	const maxRequestSize = 12 << 20  // 12MB (headroom for JSON envelope)
-	const maxContentSize = 10 << 20  // 10MB
+	const maxRequestSize = 12 << 20 // 12MB (headroom for JSON envelope)
+	const maxContentSize = 10 << 20 // 10MB
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 		var req uploadFileRequest
@@ -1212,7 +1278,11 @@ func handleOpenFile(state *State) http.HandlerFunc {
 		absPath = filepath.Clean(absPath)
 
 		if _, err := os.Stat(absPath); err != nil {
-			http.Error(w, fmt.Sprintf("file not found: %s", absPath), http.StatusNotFound)
+			if os.IsNotExist(err) {
+				http.Error(w, fmt.Sprintf("file not found: %s", absPath), http.StatusNotFound)
+			} else {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			}
 			return
 		}
 
@@ -1221,7 +1291,11 @@ func handleOpenFile(state *State) http.HandlerFunc {
 			groupName = DefaultGroup
 		}
 
-		newEntry := state.AddFile(absPath, groupName)
+		newEntry, err := state.AddFile(absPath, groupName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(newEntry); err != nil {
 			slog.Error("failed to encode response", "error", err)

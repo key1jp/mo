@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -909,6 +910,9 @@ func TestEnableBackup_TriggersOnStateChange(t *testing.T) {
 
 	s := NewState(ctx)
 
+	tmpFile := filepath.Join(t.TempDir(), "test-a.md")
+	os.WriteFile(tmpFile, []byte("# A"), 0o600) //nolint:errcheck
+
 	var mu sync.Mutex
 	var saved []RestoreData
 	s.EnableBackup(ctx, func(data RestoreData) {
@@ -917,7 +921,9 @@ func TestEnableBackup_TriggersOnStateChange(t *testing.T) {
 		mu.Unlock()
 	})
 
-	s.AddFile("/tmp/test-a.md", DefaultGroup)
+	if _, err := s.AddFile(tmpFile, DefaultGroup); err != nil {
+		t.Fatal(err)
+	}
 
 	// Wait for debounce (1s) + margin
 	time.Sleep(1500 * time.Millisecond)
@@ -938,8 +944,8 @@ func TestEnableBackup_TriggersOnStateChange(t *testing.T) {
 	if !ok {
 		t.Fatal("saved data should contain default group")
 	}
-	if len(paths) != 1 || paths[0] != "/tmp/test-a.md" {
-		t.Fatalf("got paths=%v, want [/tmp/test-a.md]", paths)
+	if len(paths) != 1 || paths[0] != tmpFile {
+		t.Fatalf("got paths=%v, want [%s]", paths, tmpFile)
 	}
 }
 
@@ -947,6 +953,9 @@ func TestEnableBackup_FinalSaveOnCancel(t *testing.T) {
 	ctx, cancel := donegroup.WithCancel(context.Background())
 
 	s := NewState(ctx)
+
+	tmpFile := filepath.Join(t.TempDir(), "test-b.md")
+	os.WriteFile(tmpFile, []byte("# B"), 0o600) //nolint:errcheck
 
 	var mu sync.Mutex
 	var saved []RestoreData
@@ -956,7 +965,9 @@ func TestEnableBackup_FinalSaveOnCancel(t *testing.T) {
 		mu.Unlock()
 	})
 
-	s.AddFile("/tmp/test-b.md", DefaultGroup)
+	if _, err := s.AddFile(tmpFile, DefaultGroup); err != nil {
+		t.Fatal(err)
+	}
 
 	// Cancel immediately without waiting for debounce
 	cancel()
@@ -980,8 +991,8 @@ func TestEnableBackup_FinalSaveOnCancel(t *testing.T) {
 	if !ok {
 		t.Fatal("final save should contain default group")
 	}
-	if len(paths) != 1 || paths[0] != "/tmp/test-b.md" {
-		t.Fatalf("got paths=%v, want [/tmp/test-b.md]", paths)
+	if len(paths) != 1 || paths[0] != tmpFile {
+		t.Fatalf("got paths=%v, want [%s]", paths, tmpFile)
 	}
 }
 
@@ -991,6 +1002,12 @@ func TestEnableBackup_ReflectsLatestState(t *testing.T) {
 
 	s := NewState(ctx)
 
+	dir := t.TempDir()
+	tmpC := filepath.Join(dir, "test-c.md")
+	tmpD := filepath.Join(dir, "test-d.md")
+	os.WriteFile(tmpC, []byte("# C"), 0o600) //nolint:errcheck
+	os.WriteFile(tmpD, []byte("# D"), 0o600) //nolint:errcheck
+
 	var mu sync.Mutex
 	var saved []RestoreData
 	s.EnableBackup(ctx, func(data RestoreData) {
@@ -999,8 +1016,12 @@ func TestEnableBackup_ReflectsLatestState(t *testing.T) {
 		mu.Unlock()
 	})
 
-	s.AddFile("/tmp/test-c.md", DefaultGroup)
-	s.AddFile("/tmp/test-d.md", DefaultGroup)
+	if _, err := s.AddFile(tmpC, DefaultGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddFile(tmpD, DefaultGroup); err != nil {
+		t.Fatal(err)
+	}
 
 	// Wait for debounce
 	time.Sleep(1500 * time.Millisecond)
@@ -1017,6 +1038,56 @@ func TestEnableBackup_ReflectsLatestState(t *testing.T) {
 	paths := last.Groups[DefaultGroup]
 	if len(paths) != 2 {
 		t.Fatalf("got %d paths, want 2", len(paths))
+	}
+}
+
+func TestAddFile_RejectsBinaryFile(t *testing.T) {
+	s := newTestState(t)
+
+	dir := t.TempDir()
+
+	// Binary file (contains NUL bytes)
+	binFile := filepath.Join(dir, "image.png")
+	os.WriteFile(binFile, []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00}, 0o600) //nolint:errcheck
+
+	_, err := s.AddFile(binFile, DefaultGroup)
+	if err == nil {
+		t.Fatal("expected error for binary file, got nil")
+	}
+	if !errors.Is(err, ErrBinaryFile) {
+		t.Fatalf("expected ErrBinaryFile, got: %v", err)
+	}
+
+	// Text file should succeed
+	txtFile := filepath.Join(dir, "readme.md")
+	os.WriteFile(txtFile, []byte("# Hello"), 0o600) //nolint:errcheck
+
+	entry, err := s.AddFile(txtFile, DefaultGroup)
+	if err != nil {
+		t.Fatalf("unexpected error for text file: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("expected non-nil entry for text file")
+	}
+
+	// Non-existent file should not error
+	_, err = s.AddFile(filepath.Join(dir, "nonexistent.md"), DefaultGroup)
+	if err != nil {
+		t.Fatalf("unexpected error for non-existent file: %v", err)
+	}
+}
+
+func TestAddFile_RejectsNonRegularFile(t *testing.T) {
+	s := newTestState(t)
+
+	dir := t.TempDir()
+
+	entry, err := s.AddFile(dir, DefaultGroup)
+	if err == nil {
+		t.Fatal("expected error for non-regular (directory) path, got nil")
+	}
+	if entry != nil {
+		t.Fatalf("expected nil entry for non-regular (directory) path, got %#v", entry)
 	}
 }
 
@@ -1065,6 +1136,62 @@ func TestAddUploadedFile(t *testing.T) {
 		}
 		if len(s.groups[DefaultGroup].Files) != 2 {
 			t.Fatalf("got %d files, want 2", len(s.groups[DefaultGroup].Files))
+		}
+	})
+}
+
+func TestHandleAddFile_RejectsBinaryFile(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("returns 400 for binary file", func(t *testing.T) {
+		s := newTestState(t)
+		handler := NewHandler(s)
+
+		binFile := filepath.Join(dir, "image.png")
+		os.WriteFile(binFile, []byte{0x89, 0x50, 0x4e, 0x47, 0x00}, 0o600) //nolint:errcheck
+
+		body, err := json.Marshal(addFileRequest{Path: binFile, Group: DefaultGroup})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("POST", "/_/api/files", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("returns 200 for text file", func(t *testing.T) {
+		s := newTestState(t)
+		handler := NewHandler(s)
+
+		txtFile := filepath.Join(dir, "readme.md")
+		os.WriteFile(txtFile, []byte("# Hello"), 0o600) //nolint:errcheck
+
+		body, err := json.Marshal(addFileRequest{Path: txtFile, Group: DefaultGroup})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("POST", "/_/api/files", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got status %d, want %d", rec.Code, http.StatusOK)
+		}
+
+		var entry FileEntry
+		if err := json.NewDecoder(rec.Body).Decode(&entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry.Name != "readme.md" {
+			t.Fatalf("got name %q, want %q", entry.Name, "readme.md")
 		}
 	})
 }
@@ -1244,7 +1371,9 @@ func TestSnapshotRestoreDataWithUploads(t *testing.T) {
 		dir := t.TempDir()
 		fsFile := filepath.Join(dir, "fs.md")
 		os.WriteFile(fsFile, []byte("# FS"), 0o600) //nolint:errcheck
-		s.AddFile(fsFile, DefaultGroup)
+		if _, err := s.AddFile(fsFile, DefaultGroup); err != nil {
+			t.Fatal(err)
+		}
 		s.AddUploadedFile("upload.md", "# Uploaded", DefaultGroup)
 
 		s.mu.RLock()
