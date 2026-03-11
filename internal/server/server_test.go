@@ -921,7 +921,9 @@ func TestEnableBackup_TriggersOnStateChange(t *testing.T) {
 		mu.Unlock()
 	})
 
-	s.AddFile(tmpFile, DefaultGroup)
+	if _, err := s.AddFile(tmpFile, DefaultGroup); err != nil {
+		t.Fatal(err)
+	}
 
 	// Wait for debounce (1s) + margin
 	time.Sleep(1500 * time.Millisecond)
@@ -963,7 +965,9 @@ func TestEnableBackup_FinalSaveOnCancel(t *testing.T) {
 		mu.Unlock()
 	})
 
-	s.AddFile(tmpFile, DefaultGroup)
+	if _, err := s.AddFile(tmpFile, DefaultGroup); err != nil {
+		t.Fatal(err)
+	}
 
 	// Cancel immediately without waiting for debounce
 	cancel()
@@ -1012,8 +1016,12 @@ func TestEnableBackup_ReflectsLatestState(t *testing.T) {
 		mu.Unlock()
 	})
 
-	s.AddFile(tmpC, DefaultGroup)
-	s.AddFile(tmpD, DefaultGroup)
+	if _, err := s.AddFile(tmpC, DefaultGroup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddFile(tmpD, DefaultGroup); err != nil {
+		t.Fatal(err)
+	}
 
 	// Wait for debounce
 	time.Sleep(1500 * time.Millisecond)
@@ -1293,7 +1301,9 @@ func TestSnapshotRestoreDataWithUploads(t *testing.T) {
 		dir := t.TempDir()
 		fsFile := filepath.Join(dir, "fs.md")
 		os.WriteFile(fsFile, []byte("# FS"), 0o600) //nolint:errcheck
-		s.AddFile(fsFile, DefaultGroup)
+		if _, err := s.AddFile(fsFile, DefaultGroup); err != nil {
+			t.Fatal(err)
+		}
 		s.AddUploadedFile("upload.md", "# Uploaded", DefaultGroup)
 
 		s.mu.RLock()

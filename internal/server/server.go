@@ -124,7 +124,7 @@ func isBinaryFile(path string) (bool, error) {
 	if n == 0 {
 		return false, nil
 	}
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}
 	return bytes.IndexByte(buf[:n], 0) >= 0, nil
