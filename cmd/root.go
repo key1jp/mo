@@ -1002,6 +1002,7 @@ func startServer(ctx context.Context, addr string, filesByGroup map[string][]str
 			})
 		}
 	}
+	var patternsAdded int
 	for group, pats := range patternsByGroup {
 		for _, pat := range pats {
 			entries, err := state.AddPattern(pat, group)
@@ -1009,6 +1010,7 @@ func startServer(ctx context.Context, addr string, filesByGroup map[string][]str
 				slog.Warn("failed to add pattern", "pattern", pat, "error", err)
 				continue
 			}
+			patternsAdded++
 			for _, entry := range entries {
 				deeplinks = append(deeplinks, deeplinkEntry{
 					URL:  buildDeeplink(addr, group, entry.ID),
@@ -1022,7 +1024,7 @@ func startServer(ctx context.Context, addr string, filesByGroup map[string][]str
 		state.AddUploadedFile(uf.Name, uf.Content, uf.Group)
 	}
 
-	if totalFiles > 0 && skippedFiles == totalFiles && len(patternsByGroup) == 0 && len(uploadedFiles) == 0 {
+	if totalFiles > 0 && skippedFiles == totalFiles && patternsAdded == 0 && len(uploadedFiles) == 0 {
 		return fmt.Errorf("all %d file(s) were skipped", totalFiles)
 	}
 
