@@ -1278,7 +1278,11 @@ func handleOpenFile(state *State) http.HandlerFunc {
 		absPath = filepath.Clean(absPath)
 
 		if _, err := os.Stat(absPath); err != nil {
-			http.Error(w, fmt.Sprintf("file not found: %s", absPath), http.StatusNotFound)
+			if os.IsNotExist(err) {
+				http.Error(w, fmt.Sprintf("file not found: %s", absPath), http.StatusNotFound)
+			} else {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			}
 			return
 		}
 
