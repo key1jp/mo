@@ -1742,7 +1742,12 @@ func TestCSPHeader(t *testing.T) {
 			"default-src 'self'",
 			"script-src 'self' 'unsafe-eval'",
 			"style-src 'self' 'unsafe-inline'",
+			"img-src 'self' https: data:",
+			"font-src 'self' data:",
+			"connect-src 'self'",
 			"object-src 'none'",
+			"base-uri 'self'",
+			"form-action 'self'",
 			"frame-ancestors 'none'",
 		} {
 			if !strings.Contains(csp, directive) {
