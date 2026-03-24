@@ -60,7 +60,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "mo [flags] [FILE ...]",
+	Use:   "mo [flags] [FILE|DIR ...]",
 	Short: "mo is a Markdown viewer that opens .md files in a browser.",
 	Long: `mo is a Markdown viewer that opens .md files in a browser with live-reload.
 
@@ -314,22 +314,27 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	target = resolved
 
+	// Check --watch + file args mutual exclusion before resolving args.
+	// Directory args are allowed with --watch (they become patterns).
 	if len(watchPatterns) > 0 && len(args) > 0 {
-		hasGlob := slices.ContainsFunc(watchPatterns, func(p string) bool {
-			return hasGlobChars(p)
-		})
-		if !hasGlob {
-			return fmt.Errorf("cannot use --watch (-w) with file arguments\n(hint: the shell may have expanded the glob pattern; quote it to prevent expansion, e.g. -w '**/*.md')")
+		if hasNonDirArgs(args) {
+			hasGlob := slices.ContainsFunc(watchPatterns, func(p string) bool {
+				return hasGlobChars(p)
+			})
+			if !hasGlob {
+				return fmt.Errorf("cannot use --watch (-w) with file arguments\n(hint: the shell may have expanded the glob pattern; quote it to prevent expansion, e.g. -w '**/*.md')")
+			}
+			return fmt.Errorf("cannot use --watch (-w) with file arguments")
 		}
-		return fmt.Errorf("cannot use --watch (-w) with file arguments")
 	}
 
-	patterns, err := resolvePatterns(watchPatterns)
+	files, dirPatterns, err := resolveArgs(args, len(watchPatterns) > 0)
 	if err != nil {
 		return err
 	}
 
-	files, err := resolveFiles(args)
+	allWatchPatterns := append(watchPatterns, dirPatterns...)
+	patterns, err := resolvePatterns(allWatchPatterns)
 	if err != nil {
 		return err
 	}
@@ -472,6 +477,20 @@ func hasGlobChars(s string) bool {
 	return strings.ContainsAny(s, "*?[")
 }
 
+func hasNonDirArgs(args []string) bool {
+	for _, arg := range args {
+		absPath, err := filepath.Abs(arg)
+		if err != nil {
+			return true
+		}
+		info, err := os.Stat(absPath)
+		if err != nil || !info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 func resolvePatterns(patterns []string) ([]string, error) {
 	var resolved []string
 	for _, pat := range patterns {
@@ -487,21 +506,35 @@ func resolvePatterns(patterns []string) ([]string, error) {
 	return resolved, nil
 }
 
-func resolveFiles(args []string) ([]string, error) {
-	var files []string
+func resolveArgs(args []string, withWatch bool) (files []string, dirPatterns []string, err error) {
 	for _, arg := range args {
 		absPath, err := filepath.Abs(arg)
 		if err != nil {
-			return nil, fmt.Errorf("cannot resolve path %s: %w", arg, err)
+			return nil, nil, fmt.Errorf("cannot resolve path %s: %w", arg, err)
 		}
-		if stat, err := os.Stat(absPath); err != nil {
-			return nil, fmt.Errorf("file not found: %s", absPath)
-		} else if stat.IsDir() {
-			return nil, fmt.Errorf("%s is a directory", absPath)
+		stat, err := os.Stat(absPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("file not found: %s", absPath)
+		}
+		if stat.IsDir() {
+			if withWatch {
+				dirPatterns = append(dirPatterns, filepath.Join(absPath, "*.md"))
+			} else {
+				matches, err := filepath.Glob(filepath.Join(absPath, "*.md"))
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to glob directory %s: %w", absPath, err)
+				}
+				if len(matches) == 0 {
+					return nil, nil, fmt.Errorf("no .md files in %s", absPath)
+				}
+				sort.Strings(matches)
+				files = append(files, matches...)
+			}
+			continue
 		}
 		files = append(files, absPath)
 	}
-	return files, nil
+	return files, dirPatterns, nil
 }
 
 func tryAddToExisting(addr string, files []string, patterns []string) bool {

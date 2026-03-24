@@ -625,3 +625,92 @@ func TestIsLoopbackBind(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveArgs_Directory(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("# A"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.md"), []byte("# B"), 0o644)
+	os.WriteFile(filepath.Join(dir, "c.txt"), []byte("text"), 0o644)
+
+	files, dirPatterns, err := resolveArgs([]string{dir}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dirPatterns) != 0 {
+		t.Fatalf("got %d dirPatterns, want 0", len(dirPatterns))
+	}
+	if len(files) != 2 {
+		t.Fatalf("got %d files, want 2: %v", len(files), files)
+	}
+	for _, f := range files {
+		if !strings.HasSuffix(f, ".md") {
+			t.Errorf("unexpected non-.md file: %s", f)
+		}
+	}
+}
+
+func TestResolveArgs_DirectoryWithWatch(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("# A"), 0o644)
+
+	files, dirPatterns, err := resolveArgs([]string{dir}, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("got %d files, want 0", len(files))
+	}
+	if len(dirPatterns) != 1 {
+		t.Fatalf("got %d dirPatterns, want 1", len(dirPatterns))
+	}
+	want := filepath.Join(dir, "*.md")
+	if dirPatterns[0] != want {
+		t.Errorf("got pattern %q, want %q", dirPatterns[0], want)
+	}
+}
+
+func TestResolveArgs_EmptyDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	_, _, err := resolveArgs([]string{dir}, false)
+	if err == nil {
+		t.Fatal("expected error for empty directory")
+	}
+	if !strings.Contains(err.Error(), "no .md files") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestResolveArgs_EmptyDirectoryWithWatch(t *testing.T) {
+	dir := t.TempDir()
+
+	files, dirPatterns, err := resolveArgs([]string{dir}, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("got %d files, want 0", len(files))
+	}
+	if len(dirPatterns) != 1 {
+		t.Fatalf("got %d dirPatterns, want 1", len(dirPatterns))
+	}
+}
+
+func TestResolveArgs_MixedFilesAndDirs(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("# A"), 0o644)
+
+	singleFile := filepath.Join(t.TempDir(), "standalone.md")
+	os.WriteFile(singleFile, []byte("# Standalone"), 0o644)
+
+	files, dirPatterns, err := resolveArgs([]string{dir, singleFile}, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(dirPatterns) != 0 {
+		t.Fatalf("got %d dirPatterns, want 0", len(dirPatterns))
+	}
+	if len(files) != 2 {
+		t.Fatalf("got %d files, want 2: %v", len(files), files)
+	}
+}
