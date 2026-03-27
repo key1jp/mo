@@ -1641,7 +1641,22 @@ func extractHeadingLine(line string) string {
 	if len(after) == 0 || (after[0] != ' ' && after[0] != '\t') {
 		return ""
 	}
-	return strings.TrimSpace(after)
+	title := strings.TrimSpace(after)
+	// Strip optional closing # sequence (CommonMark §4.2).
+	if len(title) > 0 && title[len(title)-1] == '#' {
+		i := len(title)
+		for i > 0 && title[i-1] == '#' {
+			i--
+		}
+		if i == 0 || (title[i-1] == ' ' || title[i-1] == '\t') {
+			if i == 0 {
+				title = ""
+			} else {
+				title = strings.TrimRight(title[:i], " \t")
+			}
+		}
+	}
+	return title
 }
 
 func handleFileRaw(state *State) http.HandlerFunc {

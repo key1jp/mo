@@ -1494,6 +1494,36 @@ func TestSearch(t *testing.T) {
 		}
 	})
 
+	t.Run("strips closing hashes from headings", func(t *testing.T) {
+		s := newTestState(t)
+		dir := t.TempDir()
+
+		f := filepath.Join(dir, "closing.md")
+		content := "# Title ###\nfind me\n"
+		if err := os.WriteFile(f, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AddFile(f, DefaultGroup); err != nil {
+			t.Fatal(err)
+		}
+
+		handler := NewHandler(s)
+		req := httptest.NewRequest("GET", "/_/api/search?q=find+me&group=default&context=0", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		var resp searchResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Results) != 1 || len(resp.Results[0].Matches) != 1 {
+			t.Fatalf("expected 1 result with 1 match, got %d results", len(resp.Results))
+		}
+		if got := resp.Results[0].Matches[0].Heading; got != "Title" {
+			t.Fatalf("got heading %q, want \"Title\"", got)
+		}
+	})
+
 	t.Run("returns 400 for missing query", func(t *testing.T) {
 		s := newTestState(t)
 		handler := NewHandler(s)
