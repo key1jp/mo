@@ -24,6 +24,7 @@ const searchResults: SearchResult[] = [
     fileName: "README.md",
     title: "Getting Started",
     path: "/README.md",
+    uploaded: false,
     matches: [
       {
         line: 3,

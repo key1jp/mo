@@ -1213,6 +1213,7 @@ type searchResult struct {
 	FileName string        `json:"fileName"`
 	Title    string        `json:"title,omitempty"`
 	Path     string        `json:"path"`
+	Uploaded bool          `json:"uploaded"`
 	Matches  []searchMatch `json:"matches"`
 }
 
@@ -1498,14 +1499,14 @@ func handleSearch(state *State) http.HandlerFunc {
 		}
 
 		groups := state.Groups()
-		var group *Group
+		var files []*FileEntry
 		for i := range groups {
 			if groups[i].Name == groupName {
-				group = &groups[i]
+				files = append([]*FileEntry(nil), groups[i].Files...)
 				break
 			}
 		}
-		if group == nil {
+		if files == nil {
 			http.Error(w, "group not found", http.StatusNotFound)
 			return
 		}
@@ -1520,7 +1521,7 @@ func handleSearch(state *State) http.HandlerFunc {
 
 		needle := strings.ToLower(q)
 		remaining := limit
-		for _, entry := range group.Files {
+		for _, entry := range files {
 			if remaining == 0 {
 				break
 			}
@@ -1538,6 +1539,7 @@ func handleSearch(state *State) http.HandlerFunc {
 				FileName: entry.Name,
 				Title:    entry.Title,
 				Path:     entry.Path,
+				Uploaded: entry.Uploaded,
 				Matches:  matches,
 			})
 			resp.Total += len(matches)
@@ -1570,9 +1572,27 @@ func findSearchMatches(content, needle string, contextLines, limit int) []search
 	lines := strings.Split(content, "\n")
 	matches := make([]searchMatch, 0)
 	currentHeading := ""
+	fenceChar := byte(0)
+	fenceLen := 0
 	for i, line := range lines {
-		if heading := extractHeadingLine(line); heading != "" {
-			currentHeading = heading
+		trimmed := strings.TrimSpace(line)
+		if fenceChar != 0 {
+			if len(trimmed) > 0 && trimmed[0] == fenceChar {
+				fl := len(trimmed) - len(strings.TrimLeft(trimmed, string(fenceChar)))
+				if fl >= fenceLen && strings.TrimLeft(trimmed[fl:], " \t") == "" {
+					fenceChar = 0
+					fenceLen = 0
+				}
+			}
+		} else {
+			if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+				fc := trimmed[0]
+				fl := len(trimmed) - len(strings.TrimLeft(trimmed, string(fc)))
+				fenceChar = fc
+				fenceLen = fl
+			} else if heading := extractHeadingLine(line); heading != "" {
+				currentHeading = heading
+			}
 		}
 
 		index := strings.Index(strings.ToLower(line), needle)

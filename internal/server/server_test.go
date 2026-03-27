@@ -1455,6 +1455,45 @@ func TestSearch(t *testing.T) {
 		}
 	})
 
+	t.Run("ignores headings inside fenced code blocks", func(t *testing.T) {
+		s := newTestState(t)
+		dir := t.TempDir()
+
+		f := filepath.Join(dir, "fenced.md")
+		content := "# Real Heading\n```\n# Fake Heading\nfind me\n```\n# After Fence\nfind me again\n"
+		if err := os.WriteFile(f, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AddFile(f, DefaultGroup); err != nil {
+			t.Fatal(err)
+		}
+
+		handler := NewHandler(s)
+		req := httptest.NewRequest("GET", "/_/api/search?q=find+me&group=default&context=0", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got status %d, want %d", rec.Code, http.StatusOK)
+		}
+
+		var resp searchResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Results) != 1 || len(resp.Results[0].Matches) != 2 {
+			t.Fatalf("expected 1 result with 2 matches, got %d results", len(resp.Results))
+		}
+		// First match is inside the code block — heading should be "Real Heading", not "Fake Heading"
+		if got := resp.Results[0].Matches[0].Heading; got != "Real Heading" {
+			t.Fatalf("got heading %q for match inside code block, want \"Real Heading\"", got)
+		}
+		// Second match is after the fence closes — heading should be "After Fence"
+		if got := resp.Results[0].Matches[1].Heading; got != "After Fence" {
+			t.Fatalf("got heading %q for match after fence, want \"After Fence\"", got)
+		}
+	})
+
 	t.Run("returns 400 for missing query", func(t *testing.T) {
 		s := newTestState(t)
 		handler := NewHandler(s)

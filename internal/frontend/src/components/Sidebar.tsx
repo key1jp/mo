@@ -357,7 +357,7 @@ export function Sidebar({
                         onClick={() => onSearchResultSelect?.(result.fileId, match.heading)}
                       >
                         <div className="flex items-center gap-2 text-sm font-medium text-gh-text">
-                          <FileIcon uploaded={result.fileId.startsWith("u")} />
+                          <FileIcon uploaded={result.uploaded} />
                           <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                             {(showTitle && result.title) || result.fileName}
                           </span>

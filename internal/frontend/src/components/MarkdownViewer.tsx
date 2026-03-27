@@ -711,8 +711,10 @@ export function MarkdownViewer({
     const target = Array.from(headings).find(
       (el) => (el.textContent ?? "").trim() === scrollToHeading,
     );
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
-    onScrolledToHeading?.();
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      onScrolledToHeading?.();
+    }
   }, [loading, renderedContent, scrollToHeading, onScrolledToHeading]);
 
   useLayoutEffect(() => {

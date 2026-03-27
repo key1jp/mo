@@ -41,6 +41,7 @@ export interface SearchResult {
   fileName: string;
   title?: string;
   path: string;
+  uploaded: boolean;
   matches: SearchMatch[];
 }
 
